@@ -1,29 +1,9 @@
-//PDEs and Integration
-//CSCI 5611 Swinging Rope [Exercise]
-//Stephen J. Guy <sjguy@umn.edu>
+//CSCI 5611 
+//Project2-PDESimulation
+//Cloth Simulation
+//Chan Lu, Nam Trinh
+//lu000119 and trinh064
 
-//NOTE: The simulation starts paused, press "space" to unpause
-
-//TODO:
-//  1. The rope moves very slowly now, this is because the timestep is 1/20 of realtime
-//      a. Make the timestep realtime (20 times faster than the inital code), what happens?
-//      b. Call the small 1/20th timestep update, 20 times each frame (in a for loop) -- why is it different?
-//  2. When the rope hanging down fully the spacing between the links is not equal, even though they
-//     where initalized with an even spacing between each node. What is this?
-//      - If this is a bug, fix the corisponding code
-//      - If this why is not a bug, explain why this is the expected behavior
-//  3. By default, the rope starts vertically. Change initScene() so it starts at an angle. The rope should
-//     then swing backc and forth.
-//  4. Try changing the mass and the k value. How do they interact wich each other?
-//  5. Set the kv value very low, does the rope bounce a lot? What about a high kv (not too high)?
-//     Why doesn't the rope stop swinging at high values of kv?
-//  6. Add friction so that the rope eventually stops. An easy friction model is a scaled force 
-//     in the opposite direction of a nodes current velocity. 
-
-//Challenge:
-//  - Set the top of the rope to be wherever the user’s mouse is, and allow the user to drag the rope around the scene.
-//  - Keep the top of the rope fixed, but allow the user to click and drag one of the balls of the rope to move it around.
-//  - Place a medium-sized, static 2D ball in the scene, have the nodes on the rope experience a “bounce” force if they collide with this ball.
 
 
 //Create Window
@@ -35,15 +15,17 @@ void setup() {
   initScene();
 }
 
+//used camera.pde by Liam Tyler from 5611 canvas 
+//modified slightly
 class Camera
 {
   Camera()
   {
     position      = new PVector( -500, 0, 500 ); // initial position
-    theta         = -3.14/4; // rotation around Y axis. Starts with forward direction as ( 0, 0, -1 )
+    theta         = -3.14/4; // rotation around Y axis. 
     phi           = 0; // rotation around X axis. Starts with up direction as ( 0, 1, 0 )
     moveSpeed     = 50;
-    turnSpeed     = 1.57; // radians/sec
+    turnSpeed     = 3.14/8; // radians/sec
     boostSpeed    = 10;  // extra speed boost for when you press shift
     
     // dont need to change these
@@ -99,10 +81,11 @@ class Camera
     
     
     
-    if ( keyCode == LEFT )  negativeTurn.x = 1;
+     
+    if ( keyCode == LEFT )  negativeTurn.x = .5;
     if ( keyCode == RIGHT ) positiveTurn.x = -0.5;
     if ( keyCode == UP )    positiveTurn.y = 0.5;
-    if ( keyCode == DOWN )  negativeTurn.y = -1;
+    if ( keyCode == DOWN )  negativeTurn.y = -.5;
     
     if ( keyCode == SHIFT ) shiftPressed = true; 
     if (shiftPressed){
@@ -174,144 +157,189 @@ float radius = 2;
 Vec3 stringTop = new Vec3(0,0,0);
 float restLen = 10;
 float mass = 1.0; //TRY-IT: How does changing mass affect resting length of the rope?
-float k = 200; //TRY-IT: How does changing k affect resting length of the rope?
-float kv = 30; //TRY-IT: How big can you make kv?
+float k = 250; //TRY-IT: How does changing k affect resting length of the rope?
+float kv = 25; //TRY-IT: How big can you make kv?
 float kf = 0.8; 
-Vec3 Obstacle=new Vec3(100,100,100);
+
+Vec3 obstacle=new Vec3(100,100,100);
 float obstacleR=30;
 //Initial positions and velocities of masses
 static int maxNodes = 100;
-//Vec3 pos[] = new Vec3[maxNodes];
-//Vec3 vel[] = new Vec3[maxNodes];
-//Vec3 acc[] = new Vec3[maxNodes];
+static int maxThreads =100;
 
-Vec3 pos[][]= new Vec3[maxNodes][maxNodes];
-Vec3 vel[][]= new Vec3[maxNodes][maxNodes];
-Vec3 acc[][]= new Vec3[maxNodes][maxNodes];
+//2D arrays holding the position, velocity and acceleration Vec3 in form Vec3[threads][nodes]
+Vec3 pos[][]= new Vec3[maxThreads][maxNodes];
+Vec3 vel[][]= new Vec3[maxThreads][maxNodes];
+Vec3 acc[][]= new Vec3[maxThreads][maxNodes];
 
+//initialize threads and nodes
 int numNodes = 10;
 int numThreads=15;
 
+//initialize/creates nodes to make threads
 void initScene(){
-  for(int j=0;j<numThreads;j++)
-{  for (int i = 0; i < numNodes; i++){
-    pos[j][i] = new Vec3(0,0,0);
-    pos[j][i].x = stringTop.x+restLen*j;
-    pos[j][i].y = stringTop.y + restLen*i; //Make each node a little lower
-    pos[j][i].z = stringTop.z+20*i;
-    vel[j][i] = new Vec3(0,0,0);
-  } }
+  for(int j=0;j<numThreads;j++){ 
+    for (int i = 0; i < numNodes; i++){
+      pos[j][i] = new Vec3(0,0,0);
+      pos[j][i].x = stringTop.x+restLen*j;
+      pos[j][i].y = stringTop.y + restLen*i; //Make each node a little lower
+      pos[j][i].z = stringTop.z+20*i;
+      vel[j][i] = new Vec3(0,0,0);
+    } 
+  }
 }
 
 void update(float dt){
-
   //Reset accelerations each timestep (momenum only applies to velocity)
+  //j for threads and i for nodes
   for (int j = 0; j < numThreads; j++){
-  for (int i = 0; i < numNodes; i++){
-    acc[j][i] = new Vec3(0,0,0);
-    acc[j][i].add(gravity);
-  }}
-  
-  for (int j = 0; j < numThreads; j++){
-  
-  //Compute (damped) Hooke's law for each spring
-  for (int i = 0; i < numNodes-1; i++){
-    Vec3 diff = pos[j][i+1].minus(pos[j][i]);
-    
-    float stringF = -k*(diff.length() - restLen);
-    //Vec3 frictionForce = vel[j][i].times(-kf);
-    //println(stringF,diff.length(),restLen);
-    
-    Vec3 stringDir = diff.normalized();
-    float projVbot = dot(vel[j][i], stringDir);
-    float projVtop = dot(vel[j][i+1], stringDir);
-    float dampF = -kv*(projVtop - projVbot);
-    
-    Vec3 force = stringDir.times(stringF+dampF);
-    acc[j][i].add(force.times(-1.0/mass));
-    //acc[j][i].add(frictionForce);
-    acc[j][i+1].add(force.times(1.0/mass));
-    
-  }
-  if(j<numThreads-1){
-  for (int i = 0; i < numNodes; i++){
-    Vec3 diff = pos[j+1][i].minus(pos[j][i]);
-    
-    float stringF = -k*(diff.length() - restLen);
-    //Vec3 frictionForce = vel[j][i].times(-kf);
-    //println(stringF,diff.length(),restLen);
-    
-    Vec3 stringDir = diff.normalized();
-    float projVbot = dot(vel[j][i], stringDir);
-    float projVtop = dot(vel[j+1][i], stringDir);
-    float dampF = -kv*(projVtop - projVbot);
-    
-    Vec3 force = stringDir.times(stringF+dampF);
-    acc[j][i].add(force.times(-1.0/mass));
-    //acc[j][i].add(frictionForce);
-    //println(i,j,acc[j+1][i]);
-    acc[j+1][i].add(force.times(1.0/mass));
-    
-  }}
-
-  //Eulerian integration
-  for (int i = 1; i < numNodes; i++){
-    vel[j][i].add(acc[j][i].times(dt));
-    pos[j][i].add(vel[j][i].times(dt));
-  }
-  
-  //Collision detection and response
-  for (int i = 0; i < numNodes; i++){
-    if (pos[j][i].y+radius > floor){
-      vel[j][i].y *= -.9;
-      pos[j][i].y = floor - radius;
-    }
-  }
-  
-
     for (int i = 0; i < numNodes; i++){
-      if (pos[j][i].distanceTo(Obstacle) < (obstacleR+radius)){
-      Vec3 normal = (pos[j][i].minus(Obstacle)).normalized();
-      pos[j][i] = Obstacle.plus(normal.times(obstacleR+radius).times(1.01));
-      Vec3 velNormal = normal.times(dot(vel[j][i],normal));
-      vel[j][i].subtract(velNormal.times(1 + 0.7));
+      acc[j][i] = new Vec3(0,0,0);
+      acc[j][i].add(gravity);
     }
-  } 
+  }
   
- 
- 
+  for (int j = 0; j < numThreads; j++){
+    //Compute (damped) Hooke's law for each spring
+    for (int i = 0; i < numNodes-1; i++){
+      Vec3 diff = pos[j][i+1].minus(pos[j][i]);
+      
+      float stringF = -k*(diff.length() - restLen);
+      //Vec3 frictionForce = vel[j][i].times(-kf);
+      //println(stringF,diff.length(),restLen);
+      
+      Vec3 stringDir = diff.normalized();
+      float projVbot = dot(vel[j][i], stringDir);
+      float projVtop = dot(vel[j][i+1], stringDir);
+      float dampF = -kv*(projVtop - projVbot);
+      
+      Vec3 force = stringDir.times(stringF+dampF);
+      acc[j][i].add(force.times(-1.0/mass));
+      //acc[j][i].add(frictionForce);
+      acc[j][i+1].add(force.times(1.0/mass));
+      
+    }
+    if(j<numThreads-1){
+      for (int i = 0; i < numNodes; i++){
+        Vec3 diff = pos[j+1][i].minus(pos[j][i]);
+        
+        float stringF = -k*(diff.length() - restLen);
+        //Vec3 frictionForce = vel[j][i].times(-kf);
+        //println(stringF,diff.length(),restLen);
+        
+        Vec3 stringDir = diff.normalized();
+        float projVbot = dot(vel[j][i], stringDir);
+        float projVtop = dot(vel[j+1][i], stringDir);
+        float dampF = -kv*(projVtop - projVbot);
+        
+        Vec3 force = stringDir.times(stringF+dampF);
+        acc[j][i].add(force.times(-1.0/mass));
+        //acc[j][i].add(frictionForce);
+        //println(i,j,acc[j+1][i]);
+        acc[j+1][i].add(force.times(1.0/mass));
+        
+      }
+    }
   
-}
-
- //camera(mouseX, mouseY, 220.0, // eyeX, eyeY, eyeZ
- //        0.0, 0.0, 0.0, // centerX, centerY, centerZ
- //        0.0, 1.0, 0.0); // upX, upY, upZ
+    //Eulerian integration
+    for (int i = 1; i < numNodes; i++){
+      vel[j][i].add(acc[j][i].times(dt));
+      pos[j][i].add(vel[j][i].times(dt));
+    }
+    
+    //Collision detection and response
+    for (int i = 0; i < numNodes; i++){
+      if (pos[j][i].y+radius > floor){
+        vel[j][i].y *= -.9;
+        pos[j][i].y = floor - radius;
+      }
+    }
+    
+    //Colision with obstacle
+    for (int i = 0; i < numNodes; i++){
+      if (pos[j][i].distanceTo(obstacle) < (obstacleR+radius)){
+        Vec3 normal = (pos[j][i].minus(obstacle)).normalized();
+        pos[j][i] = obstacle.plus(normal.times(obstacleR+radius).times(1.01));
+        Vec3 velNormal = normal.times(dot(vel[j][i],normal));
+        vel[j][i].subtract(velNormal.times(1 + 0.7));
+      }
+    } 
+   }
 }
 
 //Draw the scene: one sphere per mass, one line connecting each pair
 boolean paused = true;
 void draw() {
-  background(255,255,255);
+  //  72  126  138
+  
+  //uncomment works for full and original size
+  background(72,126,138);
+
+  //can't get fullscreen with sky2 image
+  //PImage img;
+  //img = loadImage("sky.jpg");
+  ////img.width=(displayWidth);
+  ////img.height=(displayHeight);
+  ////img.resize(displayWidth,0);
+  ////img.resize(0,displayHeight);
+  //background(img);
+
   noLights();
 
   camera.Update(1.0/frameRate);
-  if (!paused) {for(int i=1;i<110 ;i++)update(1/(120*frameRate));}
+  if (!paused) {for(int i=1;i<120 ;i++)update(1/(120*frameRate));}
   //if (!paused) {update(1/frameRate);}
   fill(0,0,0);
-  for (int j = 0; j < numThreads; j++){
-  for (int i = 0; i < numNodes-1; i++){
-    pushMatrix();
-    if(i<numNodes-1) {line(pos[j][i].x,pos[j][i].y, pos[j][i].z, pos[j][i+1].x,pos[j][i+1].y, pos[j][i+1].z);}
-    //if(j<numThreads-1) {line(pos[j][i].x,pos[j][i].y,pos[j][i+1].x,pos[j][i+1].y);}
-    translate(pos[j][i+1].x,pos[j][i+1].y,pos[j][i+1].z);
-    sphere(radius);
-    popMatrix();
-  } }
+  for (int j = 0; j < numThreads-1; j++){
+    for (int i = 0; i < numNodes; i++){
+      // for seeing nodes
+      //pushMatrix();
+      //if(i<numNodes-1) {line(pos[j][i].x,pos[j][i].y, pos[j][i].z, pos[j][i+1].x,pos[j][i+1].y, pos[j][i+1].z);}
+      ////if(j<numThreads-1) {line(pos[j][i].x,pos[j][i].y,pos[j][i+1].x,pos[j][i+1].y);}
+      //translate(pos[j][i+1].x,pos[j][i+1].y,pos[j][i+1].z);
+      //sphere(radius);
+      //popMatrix();
+      
+      //checkered look to cloth
+      if (j%2 ==0){
+        if (i%2 == 0) fill(255,255, 255);
+        else fill(255, 0, 0);
+      }
+      else{
+        if (i%2 != 0) fill(255,255,255);
+        else fill(0, 0, 0);
+      }
+      
+      //triangle creations
+      stroke(153);
+      beginShape(TRIANGLES);
+      if (i == 0) {
+        vertex(stringTop.x + j*restLen, stringTop.y, stringTop.z);
+        vertex(stringTop.x + (j+1)*restLen, stringTop.y, stringTop.z);
+      }
+      else {
+        vertex(pos[j][i-1].x, pos[j][i-1].y, pos[j][i-1].z);
+        vertex(pos[j+1][i-1].x, pos[j+1][i-1].y, pos[j+1][i-1].z);
+      }
+      vertex(pos[j+1][i].x, pos[j+1][i].y, pos[j+1][i].z);
+      endShape();
+      beginShape(TRIANGLES);
+      vertex(pos[j][i].x, pos[j][i].y, pos[j][i].z);
+      vertex(pos[j+1][i].x, pos[j+1][i].y, pos[j+1][i].z);
+      if (i == 0) vertex(stringTop.x + j*restLen, stringTop.y, stringTop.z);
+      else vertex(pos[j][i-1].x, pos[j][i-1].y,pos[j][i-1].z);
+      endShape();
+
+    } 
+  }
+  
+  //drawing obstacle
   fill(50,100,70);
+  stroke(0);
   pushMatrix();
-    translate(Obstacle.x,Obstacle.y,Obstacle.z);
-    sphere(obstacleR);
-    popMatrix();
+  translate(obstacle.x,obstacle.y,obstacle.z);
+  sphere(obstacleR);
+  popMatrix();
   
   if (paused)
     surface.setTitle(windowTitle + " [PAUSED]");
@@ -322,9 +350,12 @@ void draw() {
 void keyPressed(){
   if (key == ' ')
     paused = !paused;
-   camera.HandleKeyPressed();
+    camera.HandleKeyPressed();
    
-   if (key == 'r') {initScene();}
+   if (key == 'r') {
+     initScene();
+     paused =!paused;
+   }
 }
 
 
@@ -424,7 +455,7 @@ Vec3 interpolate(Vec3 a, Vec3 b, float t){
   return a.plus((b.minus(a)).times(t));
 }
 
-float interpolate(float a, float b, float t){
+float interpolate2(float a, float b, float t){
   return a + ((b-a)*t);
 }
 
